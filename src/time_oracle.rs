@@ -1,13 +1,14 @@
 use std::time::{Instant, Duration};
 use std::ops::Add;
 use std::cell::RefCell;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::cmp::{Ordering, Reverse};
 
 
 pub trait TimeOracle {
     fn get_now(&self) -> Instant;
     fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce()>);
+    fn get_random_duration(&self, min_time: Duration, max_time: Duration) -> Duration;
 }
 
 
@@ -39,6 +40,7 @@ impl PartialOrd for Timer {
 pub struct MockTimeOracle {
     now: RefCell<Instant>,
     timers: RefCell<BinaryHeap<Reverse<Timer>>>,
+    random_duration_queue: RefCell<VecDeque<Duration>>,
 }
 
 impl MockTimeOracle {
@@ -46,6 +48,7 @@ impl MockTimeOracle {
         Self {
             now: RefCell::new(Instant::now()),
             timers: RefCell::new(BinaryHeap::new()),
+            random_duration_queue: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -57,13 +60,17 @@ impl MockTimeOracle {
         let mut timers = self.timers.borrow_mut();
         while let Some(next_expires) = timers.peek()
             .map(|timer| timer.0.expires) {
-            if next_expires < new_now {
+            if next_expires <= new_now {
                 (timers.pop().unwrap().0.callback)();
                 continue;
             } else {
                 break;
             }
         }
+    }
+
+    pub fn push_duration(&self, duration: Duration) {
+        self.random_duration_queue.borrow_mut().push_back(duration);
     }
 }
 
@@ -76,8 +83,16 @@ impl TimeOracle for MockTimeOracle {
     fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce()>) {
         let timer = Timer {
             expires: self.now.borrow().add(timeout),
-            callback
+            callback,
         };
         self.timers.borrow_mut().push(Reverse(timer));
+    }
+
+    fn get_random_duration(&self, min_time: Duration, max_time: Duration) -> Duration {
+        let duration = self.random_duration_queue.borrow_mut().pop_front().unwrap();
+        if duration >= min_time && duration <= max_time {
+            return duration;
+        }
+        panic!("Expected queue duration between {:?} and {:?} but was {:?}", min_time, max_time, duration);
     }
 }
