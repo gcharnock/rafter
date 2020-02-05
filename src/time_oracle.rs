@@ -5,46 +5,46 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::cmp::{Ordering, Reverse};
 
 
-pub trait TimeOracle {
+pub trait TimeOracle<'a> {
     fn get_now(&self) -> Instant;
-    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce()>);
+    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>);
     fn get_random_duration(&self, min_time: Duration, max_time: Duration) -> Duration;
 }
 
 
-struct Timer {
+struct Timer<'a> {
     expires: Instant,
-    callback: Box<dyn FnOnce()>,
+    callback: Box<dyn FnOnce() + 'a>,
 }
 
-impl PartialEq for Timer {
+impl PartialEq for Timer<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.expires.eq(&other.expires)
     }
 }
 
-impl Eq for Timer {}
+impl Eq for Timer<'_> {}
 
-impl Ord for Timer {
+impl Ord for Timer<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.expires.cmp(&other.expires)
     }
 }
 
-impl PartialOrd for Timer {
+impl PartialOrd for Timer<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.expires.partial_cmp(&other.expires)
     }
 }
 
-pub struct MockTimeOracle {
+pub struct MockTimeOracle<'a> {
     now: RefCell<Instant>,
-    timers: RefCell<BinaryHeap<Reverse<Timer>>>,
+    timers: RefCell<BinaryHeap<Reverse<Timer<'a>>>>,
     random_duration_queue: RefCell<VecDeque<Duration>>,
 }
 
-impl MockTimeOracle {
-    pub fn new() -> MockTimeOracle {
+impl<'a> MockTimeOracle<'a> {
+    pub fn new() -> MockTimeOracle<'a> {
         Self {
             now: RefCell::new(Instant::now()),
             timers: RefCell::new(BinaryHeap::new()),
@@ -75,12 +75,12 @@ impl MockTimeOracle {
 }
 
 
-impl TimeOracle for MockTimeOracle {
+impl<'a> TimeOracle<'a> for MockTimeOracle<'a> {
     fn get_now(&self) -> Instant {
         *self.now.borrow()
     }
 
-    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce()>) {
+    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>) {
         let timer = Timer {
             expires: self.now.borrow().add(timeout),
             callback,
