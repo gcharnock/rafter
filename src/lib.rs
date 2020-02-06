@@ -3,7 +3,7 @@ extern crate log;
 
 use crate::time_oracle::TimeOracle;
 use std::sync::{Arc, RwLock};
-use crate::transport::Transport;
+use crate::transport::{Transport, RequestVote};
 use crate::config::RaftConfig;
 use std::rc::Rc;
 
@@ -19,11 +19,6 @@ pub enum RaftStatus {
     Candidate,
 }
 
-pub enum RaftRPC {
-    RequestVote,
-    AppendEntries,
-}
-
 pub struct RaftState {
     status: RaftStatus,
     has_voted_this_term: bool,
@@ -31,6 +26,7 @@ pub struct RaftState {
 }
 
 pub struct Raft<'s, NodeId> {
+    node_id: NodeId,
     state: Arc<RwLock<RaftState>>,
     time_oracle: Rc<dyn TimeOracle<'s>>,
     raft_config: RaftConfig<NodeId>,
@@ -38,11 +34,13 @@ pub struct Raft<'s, NodeId> {
 }
 
 impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
-    pub fn new(raft_config: RaftConfig<NodeId>,
+    pub fn new(node_id: NodeId,
+               raft_config: RaftConfig<NodeId>,
                time_oracle: Rc<dyn TimeOracle<'s>>,
                transport: Rc<dyn Transport<NodeId>>)
                -> Raft<'s, NodeId> {
         Raft {
+            node_id,
             state: Arc::new(RwLock::new(RaftState {
                 status: RaftStatus::Follower,
                 has_voted_this_term: false,
@@ -69,8 +67,12 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
         debug!("election_expire");
         let mut state = self.state.write().unwrap();
         state.status = RaftStatus::Candidate;
+        state.term_number += 1;
         for peer in self.raft_config.get_peer_ids().iter() {
-            self.transport.request_vote(*peer);
+            self.transport.request_vote(*peer, RequestVote {
+                term: state.term_number,
+                node_id: self.node_id,
+            });
         }
     }
 }
@@ -96,6 +98,11 @@ mod logging_setup {
     }
 }
 
+
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+
 #[cfg(test)]
 mod tests {
     use crate::{Raft, RaftConfig, time_oracle, transport};
@@ -103,17 +110,21 @@ mod tests {
     use crate::RaftStatus::{Follower, Candidate};
     use crate::logging_setup::start_logger;
     use std::rc::Rc;
+    use crate::transport::{RaftMessage, RaftRPC, RequestVote};
+
+    lazy_static! {
+        static ref DELTA_100MS: Duration = Duration::new(0, 100 * 1000 * 1000);
+        static ref MIN_TIMEOUT: Duration = *DELTA_100MS * 10;
+        static ref MAX_TIMEOUT: Duration = *DELTA_100MS * 20;
+    }
 
     #[test]
     fn isolated_node() {
         start_logger();
-        let delta_100ms = Duration::new(0, 100 * 1000 * 1000);
-        let min_timeout = delta_100ms * 10;
-        let max_timeout = delta_100ms * 20;
 
         let time_oracle
             = Rc::new(time_oracle::MockTimeOracle::new());
-        time_oracle.push_duration(delta_100ms * 15);
+        time_oracle.push_duration(*DELTA_100MS * 15);
 
         let transport =
             Rc::new(transport::MockTransport::new());
@@ -121,23 +132,68 @@ mod tests {
         let raft_config = RaftConfig::<u32>::new(
             3,
             vec!(1, 2),
-            min_timeout,
-            max_timeout,
+            *MIN_TIMEOUT,
+            *MAX_TIMEOUT,
         );
-        let raft = Raft::<u32>::new(raft_config,
-                                    time_oracle.clone(),
-                                    transport.clone());
+        let raft = Raft::<u32>::new(
+            0,
+            raft_config,
+            time_oracle.clone(),
+            transport.clone());
+
         let raft = Rc::new(raft);
         Raft::start(raft.clone());
 
-        time_oracle.add_time(delta_100ms);
+        time_oracle.add_time(*DELTA_100MS);
         assert_eq!(raft.state.read().unwrap().status, Follower);
-        time_oracle.add_time(delta_100ms * 14);
+        assert_eq!(raft.state.read().unwrap().term_number, 0);
+
+        time_oracle.add_time(*DELTA_100MS * 14);
+
         assert_eq!(raft.state.read().unwrap().status, Candidate);
+        assert_eq!(raft.state.read().unwrap().term_number, 1);
+
         transport.expect_request_vote_message(1);
         transport.expect_request_vote_message(2);
 
         drop(time_oracle);
         drop(transport);
+    }
+
+    #[test]
+    fn follower_grants_vote() {
+        start_logger();
+
+        let time_oracle
+            = Rc::new(time_oracle::MockTimeOracle::new());
+        time_oracle.push_duration(*DELTA_100MS * 15);
+
+        let transport =
+            Rc::new(transport::MockTransport::new());
+
+        let raft_config = RaftConfig::<u32>::new(
+            3,
+            vec!(1, 2),
+            *MIN_TIMEOUT,
+            *MAX_TIMEOUT,
+        );
+        let raft = Raft::<u32>::new(
+            0,
+            raft_config,
+            time_oracle.clone(),
+            transport.clone());
+
+        let raft = Rc::new(raft);
+        Raft::start(raft.clone());
+
+        transport.send_to(RaftMessage {
+            address: 0,
+            rpc: RaftRPC::<u32>::RequestVote(RequestVote {
+                node_id: 1,
+                term: 1,
+            }),
+        });
+
+        //transport.expect_vote()
     }
 }
