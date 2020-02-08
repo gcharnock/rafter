@@ -80,12 +80,13 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
 
     fn election_expire(&self) {
         debug!("election_expire");
-        let mut state = self.state.write().unwrap();
-        state.status = RaftStatus::Candidate;
-        state.term_number += 1;
+        {
+            let mut state = self.state.write().unwrap();
+            state.status = RaftStatus::Candidate;
+            state.term_number += 1;
+        }
         for peer in self.raft_config.get_peer_ids().iter() {
             self.request_vote(*peer, RequestVote {
-                term: state.term_number
             });
         }
     }
@@ -113,15 +114,15 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
     fn append_entries(&self, node_id: NodeId) {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to: node_id,
-            rpc: RaftRPC::AppendEntries(AppendEntries {
-                term: self.state.read().unwrap().term_number,
-            }),
+            term: self.state.read().unwrap().term_number,
+            rpc: RaftRPC::AppendEntries(AppendEntries {}),
         });
     }
 
     fn request_vote(&self, send_to: NodeId, request_vote: RequestVote) {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to,
+            term: self.state.read().unwrap().term_number,
             rpc: RaftRPC::RequestVote(request_vote),
         });
     }
@@ -129,8 +130,8 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
     fn vote(&self, send_to: NodeId) {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to,
+            term: self.state.read().unwrap().term_number,
             rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
-                term: self.state.read().unwrap().term_number,
                 vote_grated: true,
             }),
         });
@@ -139,8 +140,8 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
     fn append_entries_response(&self, send_to: NodeId, success: bool) {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to,
+            term: self.state.read().unwrap().term_number,
             rpc: RaftRPC::AppendEntriesResponse(AppendEntriesResponse {
-                term: self.state.read().unwrap().term_number,
                 success,
             }),
         });

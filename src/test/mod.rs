@@ -82,8 +82,8 @@ fn follower_remains_follower() {
     test.time_oracle.add_time(*MIN_TIMEOUT / 2);
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
+        term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {
-            term: 0,
         }),
     });
     test.raft.loop_iter();
@@ -91,8 +91,8 @@ fn follower_remains_follower() {
     test.time_oracle.add_time(*MIN_TIMEOUT / 2);
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
+        term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {
-            term: 0,
         }),
     });
     test.raft.loop_iter();
@@ -108,8 +108,8 @@ fn append_entries_correct_term_number() {
 
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
+        term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {
-            term: 0,
         }),
     });
     test.raft.loop_iter();
@@ -128,8 +128,8 @@ fn append_entries_incorrect_term_number() {
     test.time_oracle.add_time(*MIN_TIMEOUT / 2);
     test.transport.send_to(IncomingRaftMessage {
         recv_from: 1,
+        term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {
-            term: 0,
         }),
     });
     test.raft.loop_iter();
@@ -140,8 +140,8 @@ fn append_entries_incorrect_term_number() {
 
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
+        term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {
-            term: 0
         }),
     });
     test.raft.loop_iter();
@@ -180,8 +180,8 @@ fn follower_grants_vote() {
 
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
+        term: 1,
         rpc: RaftRPC::RequestVote(RequestVote {
-            term: 1,
         }),
     });
     test.raft.loop_iter();
