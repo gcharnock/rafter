@@ -53,15 +53,20 @@ fn follower_remains_follower() {
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
-    test.time_oracle.add_time(*DELTA_100MS);
+    test.time_oracle.add_time(*MIN_TIMEOUT/2);
     test.transport.send_to(IncomingRaftMessage {
         recv_from: 1,
         rpc: AppendEntries
     });
     test.raft.loop_iter();
 
-    test.time_oracle.add_time(*MIN_TIMEOUT);
+    test.time_oracle.add_time(*MIN_TIMEOUT/2);
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: 1,
+        rpc: AppendEntries
+    });
     test.raft.loop_iter();
+
     assert_eq!(test.raft.state.read().unwrap().status, Follower);
 }
 
