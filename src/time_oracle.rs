@@ -1,19 +1,31 @@
 use std::time::{Instant, Duration};
 use std::ops::Add;
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
 use std::collections::{BinaryHeap, VecDeque};
 use std::cmp::{Ordering, Reverse};
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TimerId(u32);
+
+impl TimerId {
+    fn next(&self) -> TimerId {
+        let TimerId(id) = self;
+        return TimerId(id + 1);
+    }
+}
 
 pub trait TimeOracle<'a> {
     fn get_now(&self) -> Instant;
-    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>);
+    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>) -> TimerId;
+    fn reset_timer(&self, timer_id: TimerId);
     fn get_random_duration(&self, min_time: Duration, max_time: Duration) -> Duration;
 }
 
 
 struct Timer<'a> {
     expires: Instant,
+    duration: Duration,
+    id: TimerId,
     callback: Box<dyn FnOnce() + 'a>,
 }
 
@@ -39,6 +51,7 @@ impl PartialOrd for Timer<'_> {
 
 pub struct MockTimeOracle<'a> {
     now: RefCell<Instant>,
+    next_id: Cell<TimerId>,
     timers: RefCell<BinaryHeap<Reverse<Timer<'a>>>>,
     random_duration_queue: RefCell<VecDeque<Duration>>,
 }
@@ -48,6 +61,7 @@ impl<'a> MockTimeOracle<'a> {
         Self {
             now: RefCell::new(Instant::now()),
             timers: RefCell::new(BinaryHeap::new()),
+            next_id: Cell::new(TimerId(0)),
             random_duration_queue: RefCell::new(VecDeque::new()),
         }
     }
@@ -80,12 +94,22 @@ impl<'a> TimeOracle<'a> for MockTimeOracle<'a> {
         *self.now.borrow()
     }
 
-    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>) {
+    fn set_timer(&self, timeout: Duration, callback: Box<dyn FnOnce() + 'a>) -> TimerId {
+        let timer_id = self.next_id.get();
+        self.next_id.set(timer_id.next());
+
         let timer = Timer {
             expires: self.now.borrow().add(timeout),
+            duration: timeout,
+            id: timer_id,
             callback,
         };
         self.timers.borrow_mut().push(Reverse(timer));
+        timer_id
+    }
+
+    fn reset_timer(&self, timer_id: TimerId) {
+        let queue = self.timers.borrow_mut();
     }
 
     fn get_random_duration(&self, min_time: Duration, max_time: Duration) -> Duration {

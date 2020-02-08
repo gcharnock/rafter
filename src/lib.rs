@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use crate::time_oracle::TimeOracle;
+use crate::time_oracle::{TimeOracle, TimerId};
 use std::sync::{Arc, RwLock};
 use crate::transport::{Transport, RequestVote, RaftRPC, IncomingRaftMessage};
 use crate::config::RaftConfig;
@@ -13,7 +13,7 @@ pub mod transport;
 pub mod tests;
 
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum RaftStatus {
     Leader,
     Follower,
@@ -24,6 +24,7 @@ pub struct RaftState {
     status: RaftStatus,
     has_voted_this_term: bool,
     term_number: u64,
+    timer: Option<TimerId>
 }
 
 pub struct Raft<'s, NodeId> {
@@ -46,6 +47,7 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
                 status: RaftStatus::Follower,
                 has_voted_this_term: false,
                 term_number: 0,
+                timer: None
             })),
             time_oracle,
             raft_config,
@@ -61,7 +63,8 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
         let election_timeout = this.time_oracle.get_random_duration(
             this.raft_config.get_min_election_timeout(),
             this.raft_config.get_max_election_timeout());
-        this.time_oracle.set_timer(election_timeout, callback_box);
+        let timer_id = this.time_oracle.set_timer(election_timeout, callback_box);
+        this.state.write().unwrap().timer = Some(timer_id);
     }
 
     pub fn loop_iter(&self) {
@@ -87,7 +90,8 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
     fn receive_rec(&self, message: IncomingRaftMessage<NodeId>) {
         match message.rpc {
             RaftRPC::AppendEntries => {
-
+                let mut state = self.state.read().unwrap();
+                state.status;
             },
             RaftRPC::RequestVote(request) => {
                 info!("Got vote request, will  vote for the candidate");

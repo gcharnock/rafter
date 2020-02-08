@@ -7,6 +7,7 @@ use crate::logging_setup::start_logger;
 use std::rc::Rc;
 use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, MockTransport};
 use crate::time_oracle::{TimeOracle, MockTimeOracle};
+use crate::transport::RaftRPC::AppendEntries;
 
 lazy_static! {
         static ref DELTA_100MS: Duration = Duration::new(0, 100 * 1000 * 1000);
@@ -18,10 +19,10 @@ lazy_static! {
 struct Test<'a> {
     time_oracle: Rc<MockTimeOracle<'a>>,
     transport: Rc<MockTransport>,
-    raft: Raft<'a, u32>,
+    raft: Rc<Raft<'a, u32>>,
 }
 
-fn setup_test<'a>() -> Box<Test<'a>> {
+fn setup_test() -> Box<Test<'static>> {
     start_logger();
     let time_oracle
         = Rc::new(time_oracle::MockTimeOracle::new());
@@ -41,32 +42,47 @@ fn setup_test<'a>() -> Box<Test<'a>> {
         time_oracle.clone(),
         transport.clone());
 
+    let raft = Rc::new(raft);
+
     return Box::new(Test { raft, transport, time_oracle });
 }
 
 #[test]
 fn follower_remains_follower() {
     let test = setup_test();
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+
+    test.time_oracle.add_time(*DELTA_100MS);
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: 1,
+        rpc: AppendEntries
+    });
+    test.raft.loop_iter();
+
+    test.time_oracle.add_time(*MIN_TIMEOUT);
+    test.raft.loop_iter();
+    assert_eq!(test.raft.state.read().unwrap().status, Follower);
 }
 
 #[test]
-fn follower_becomes_leader() {
+fn follower_becomes_candidate() {
     let test = setup_test();
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
 
     test.time_oracle.push_duration(*DELTA_100MS * 15);
 
-    let raft = Rc::new(test.raft);
-    Raft::start(raft.clone());
 
 
     test.time_oracle.add_time(*DELTA_100MS);
-    assert_eq!(raft.state.read().unwrap().status, Follower);
-    assert_eq!(raft.state.read().unwrap().term_number, 0);
+    assert_eq!(test.raft.state.read().unwrap().status, Follower);
+    assert_eq!(test.raft.state.read().unwrap().term_number, 0);
 
     test.time_oracle.add_time(*DELTA_100MS * 14);
 
-    assert_eq!(raft.state.read().unwrap().status, Candidate);
-    assert_eq!(raft.state.read().unwrap().term_number, 1);
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+    assert_eq!(test.raft.state.read().unwrap().term_number, 1);
 
     test.transport.expect_request_vote_message(1);
     test.transport.expect_request_vote_message(2);
