@@ -1,16 +1,22 @@
 #[macro_use]
 extern crate log;
 
-use crate::time_oracle::{TimeOracle};
+use crate::time_oracle::TimeOracle;
 use std::sync::{Arc, RwLock};
-use crate::transport::{Transport, RequestVote, RaftRPC, IncomingRaftMessage};
+use crate::transport::{Transport, RequestVote, RaftRPC, IncomingRaftMessage, OutgoingRaftMessage, AppendEntriesResponse, AppendEntries, RequestVoteResponse};
 use crate::config::RaftConfig;
 use std::rc::Rc;
 
 pub mod config;
 pub mod time_oracle;
 pub mod transport;
-pub mod tests;
+
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+
+#[cfg(test)]
+mod test;
 
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -23,7 +29,7 @@ pub enum RaftStatus {
 pub struct RaftState {
     status: RaftStatus,
     has_voted_this_term: bool,
-    term_number: u64
+    term_number: u64,
 }
 
 pub struct Raft<'s, NodeId> {
@@ -78,7 +84,7 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
         state.status = RaftStatus::Candidate;
         state.term_number += 1;
         for peer in self.raft_config.get_peer_ids().iter() {
-            self.transport.request_vote(*peer, RequestVote {
+            self.request_vote(*peer, RequestVote {
                 term: state.term_number
             });
         }
@@ -86,44 +92,61 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
 
     fn receive_rec(&self, message: IncomingRaftMessage<NodeId>) {
         match message.rpc {
-            RaftRPC::AppendEntries => {
+            RaftRPC::AppendEntries(_) => {
                 debug!("AppendEntries");
                 self.time_oracle.reset_timer();
-            },
+                self.append_entries_response(message.recv_from, true);
+            }
+            RaftRPC::AppendEntriesResponse(_) => {
+                unimplemented!()
+            }
             RaftRPC::RequestVote(request) => {
                 info!("Got vote request, will  vote for the candidate");
-                self.transport.vote(message.recv_from);
-            },
-            RaftRPC::Vote => {
-
-            },
+                self.vote(message.recv_from);
+            }
+            RaftRPC::RequestVoteResponse(_) => {
+                unimplemented!()
+            }
         }
     }
-}
 
-#[cfg(test)]
-mod logging_setup {
-    extern crate env_logger;
+    fn append_entries(&self, node_id: NodeId) {
+        self.transport.send_msg(OutgoingRaftMessage {
+            send_to: node_id,
+            rpc: RaftRPC::AppendEntries(AppendEntries {
+                term: self.state.read().unwrap().term_number,
+            }),
+        });
+    }
 
-    use log::LevelFilter::Trace;
-    use std::io::Write;
+    fn request_vote(&self, send_to: NodeId, request_vote: RequestVote) {
+        self.transport.send_msg(OutgoingRaftMessage {
+            send_to,
+            rpc: RaftRPC::RequestVote(request_vote),
+        });
+    }
 
-    pub fn start_logger() {
-        let _ = env_logger::builder()
-            .format(|buf, record|
-                writeln!(buf, "{}:{} {} - {}",
-                         record.file().unwrap_or("<UNKNOWN>"),
-                         record.line().unwrap_or(0),
-                         record.level(),
-                         record.args()))
-            .filter_level(Trace)
-            .is_test(true)
-            .try_init();
+    fn vote(&self, send_to: NodeId) {
+        self.transport.send_msg(OutgoingRaftMessage {
+            send_to,
+            rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
+                term: self.state.read().unwrap().term_number,
+                vote_grated: true,
+            }),
+        });
+    }
+
+    fn append_entries_response(&self, send_to: NodeId, success: bool) {
+        self.transport.send_msg(OutgoingRaftMessage {
+            send_to,
+            rpc: RaftRPC::AppendEntriesResponse(AppendEntriesResponse {
+                term: self.state.read().unwrap().term_number,
+                success,
+            }),
+        });
     }
 }
 
 
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
+
 
