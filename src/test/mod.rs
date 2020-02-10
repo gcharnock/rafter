@@ -8,7 +8,6 @@ use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries}
 use self::mock_time_oracle::MockTimeOracle;
 use self::mock_transport::MockTransport;
 use self::logging_setup::start_logger;
-use std::marker::PhantomPinned;
 
 mod mock_time_oracle;
 mod mock_transport;
@@ -25,7 +24,7 @@ const PEER_B: u32 = 2;
 
 struct Test<'a> {
     time_oracle: Rc<MockTimeOracle<'a>>,
-    transport: Rc<MockTransport>,
+    transport: Rc<MockTransport<'a>>,
     raft: Rc<Raft<'a, u32>>,
 }
 
@@ -54,7 +53,7 @@ fn setup_test() -> Box<Test<'static>> {
     start_logger();
     let time_oracle = Rc::new(MockTimeOracle::new());
 
-    let transport = Rc::new(MockTransport::new());
+    let mut transport = Rc::new(MockTransport::new());
 
     let raft_config = RaftConfig::<u32>::new(
         3,
@@ -69,6 +68,7 @@ fn setup_test() -> Box<Test<'static>> {
         transport.clone());
 
     let raft = Rc::new(raft);
+    transport.inject_raft(raft.clone());
 
     return Box::new(Test { raft, transport, time_oracle });
 }
@@ -83,8 +83,7 @@ fn follower_remains_follower() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {
-        }),
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
     test.raft.loop_iter();
 
@@ -92,8 +91,7 @@ fn follower_remains_follower() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {
-        }),
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
     test.raft.loop_iter();
 
@@ -109,13 +107,27 @@ fn append_entries_correct_term_number() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {
-        }),
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
     test.raft.loop_iter();
     let response =
         test.transport.expect_append_entries_response(PEER_A);
     assert!(response.success);
+}
+
+#[test]
+fn append_entries_updates_term_number() {
+    let test = setup_test();
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 2,
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+    });
+    test.raft.loop_iter();
+    assert_eq!(test.raft.state.read().unwrap().term_number, 2);
 }
 
 
@@ -125,28 +137,18 @@ fn append_entries_incorrect_term_number() {
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
-    test.time_oracle.add_time(*MIN_TIMEOUT / 2);
-    test.transport.send_to(IncomingRaftMessage {
-        recv_from: 1,
-        term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {
-        }),
-    });
-    test.raft.loop_iter();
+    //given
+    test.raft.state.write().unwrap().term_number = 1;
 
-    test.time_oracle.add_time(*MIN_TIMEOUT / 2);
-    assert_eq!(test.raft.state.read().unwrap().term_number, 1);
-    assert_eq!(test.raft.state.read().unwrap().status, Follower);
-
+    //if
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {
-        }),
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
     test.raft.loop_iter();
 
-
+    //then
     test.transport.expect_append_entries_response(PEER_A);
 }
 
@@ -181,8 +183,7 @@ fn follower_grants_vote() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 1,
-        rpc: RaftRPC::RequestVote(RequestVote {
-        }),
+        rpc: RaftRPC::RequestVote(RequestVote {}),
     });
     test.raft.loop_iter();
 

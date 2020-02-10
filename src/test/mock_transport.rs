@@ -1,18 +1,27 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use crate::transport::{OutgoingRaftMessage, IncomingRaftMessage, RaftRPC, Transport, AppendEntriesResponse, RequestVote, AppendEntries, RequestVoteResponse};
+use std::rc::Rc;
+use crate::Raft;
 
-pub struct MockTransport {
+pub struct MockTransport<'s> {
+    raft: RefCell<Option<Rc<Raft<'s, u32>>>>,
     send_queue: RefCell<VecDeque<OutgoingRaftMessage<u32>>>,
     recv_queue: RefCell<VecDeque<IncomingRaftMessage<u32>>>,
 }
 
-impl MockTransport {
+impl<'s> MockTransport<'s> {
     pub fn new() -> Self {
         Self {
+            raft: RefCell::new(None),
             send_queue: RefCell::new(VecDeque::new()),
             recv_queue: RefCell::new(VecDeque::new()),
         }
+    }
+
+    pub fn inject_raft(&self, raft: Rc<Raft<'s, u32>>) {
+        // This creates a circular reference, that would be bad in non-test code.
+        *self.raft.borrow_mut() = Some(raft);
     }
 
     pub fn expect_request_vote_message(&self, node_id: u32) -> RequestVote {
@@ -56,7 +65,7 @@ impl MockTransport {
     }
 }
 
-impl Transport<u32> for MockTransport {
+impl<'s> Transport<u32> for MockTransport<'s> {
     fn send_msg(&self, msg: OutgoingRaftMessage<u32>) {
         self.send_queue.borrow_mut().push_back(msg);
     }

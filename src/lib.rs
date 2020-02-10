@@ -86,12 +86,17 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
             state.term_number += 1;
         }
         for peer in self.raft_config.get_peer_ids().iter() {
-            self.request_vote(*peer, RequestVote {
-            });
+            self.request_vote(*peer, RequestVote {});
         }
     }
 
     fn receive_rec(&self, message: IncomingRaftMessage<NodeId>) {
+        let self_term_number = self.state.read().unwrap().term_number;
+        if message.term > self_term_number {
+            debug!("updating term number {} -> {}", self_term_number, message.term);
+            self.state.write().unwrap().term_number = message.term;
+        }
+
         match message.rpc {
             RaftRPC::AppendEntries(_) => {
                 debug!("AppendEntries");
