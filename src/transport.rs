@@ -9,7 +9,7 @@ pub struct RequestVote {
 
 #[derive(Debug)]
 pub struct RequestVoteResponse {
-    pub vote_grated: bool
+    pub vote_granted: bool
 }
 
 

@@ -37,7 +37,7 @@ impl<'s> MockTransport<'s> {
         let msg = self.send_queue.borrow_mut().pop_front().unwrap();
         assert_eq!(msg.send_to, node_id);
         if let RaftRPC::AppendEntries(append_entries) = msg.rpc {
-            append_entries;
+            return append_entries;
         }
         panic!("Bad message type");
     }
@@ -62,6 +62,9 @@ impl<'s> MockTransport<'s> {
 
     pub fn send_to(&self, message: IncomingRaftMessage<u32>) {
         self.recv_queue.borrow_mut().push_back(message);
+        if let Some(ref raft) = *self.raft.borrow() {
+            raft.loop_iter();
+        }
     }
 }
 

@@ -6,6 +6,8 @@ use std::sync::{Arc, RwLock};
 use crate::transport::{Transport, RequestVote, RaftRPC, IncomingRaftMessage, OutgoingRaftMessage, AppendEntriesResponse, AppendEntries, RequestVoteResponse};
 use crate::config::RaftConfig;
 use std::rc::Rc;
+use std::fmt::Debug;
+use crate::RaftStatus::Leader;
 
 pub mod config;
 pub mod time_oracle;
@@ -23,7 +25,7 @@ mod test;
 pub enum RaftStatus {
     Leader,
     Follower,
-    Candidate,
+    Candidate(u32),
 }
 
 pub struct RaftState {
@@ -40,7 +42,7 @@ pub struct Raft<'s, NodeId> {
     transport: Rc<dyn Transport<NodeId>>,
 }
 
-impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
+impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
     pub fn new(node_id: NodeId,
                raft_config: RaftConfig<NodeId>,
                time_oracle: Rc<dyn TimeOracle<'s>>,
@@ -80,13 +82,20 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
 
     fn election_expire(&self) {
         debug!("election_expire");
-        {
-            let mut state = self.state.write().unwrap();
-            state.status = RaftStatus::Candidate;
-            state.term_number += 1;
-        }
-        for peer in self.raft_config.get_peer_ids().iter() {
-            self.request_vote(*peer, RequestVote {});
+        if self.state.read().unwrap().status == Leader {
+            for peer_id in self.raft_config.get_peer_ids().iter() {
+                debug!("sending heartbeat to {:?}", peer_id);
+                self.append_entries(*peer_id);
+            }
+        } else {
+            {
+                let mut state = self.state.write().unwrap();
+                state.status = RaftStatus::Candidate(0);
+                state.term_number += 1;
+            }
+            for peer in self.raft_config.get_peer_ids().iter() {
+                self.request_vote(*peer, RequestVote {});
+            }
         }
     }
 
@@ -107,11 +116,17 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
                 unimplemented!()
             }
             RaftRPC::RequestVote(request) => {
-                info!("Got vote request, will  vote for the candidate");
-                self.vote(message.recv_from);
+                let vote_granted = message.term >= self_term_number;
+                info!("Got vote request from {:?}, vote granted = {}", message.recv_from, vote_granted);
+                self.vote(message.recv_from, vote_granted);
             }
-            RaftRPC::RequestVoteResponse(_) => {
-                unimplemented!()
+            RaftRPC::RequestVoteResponse(response) => {
+                if response.vote_granted {
+                    self.state.write().unwrap().status = Leader;
+                    for node_id in self.raft_config.get_peer_ids().iter() {
+                        self.append_entries(*node_id);
+                    }
+                }
             }
         }
     }
@@ -132,12 +147,12 @@ impl<'s, NodeId: Copy + 's> Raft<'s, NodeId> {
         });
     }
 
-    fn vote(&self, send_to: NodeId) {
+    fn vote(&self, send_to: NodeId, vote_granted: bool) {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to,
             term: self.state.read().unwrap().term_number,
             rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
-                vote_grated: true,
+                vote_granted,
             }),
         });
     }

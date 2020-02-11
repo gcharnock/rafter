@@ -2,8 +2,8 @@ use std::time::Duration;
 use std::rc::Rc;
 
 use crate::{Raft, RaftConfig};
-use crate::RaftStatus::{Follower, Candidate};
-use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries};
+use crate::RaftStatus::{Follower, Candidate, Leader};
+use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
 use self::mock_time_oracle::MockTimeOracle;
 use self::mock_transport::MockTransport;
@@ -21,6 +21,8 @@ lazy_static! {
 const SELF_ID: u32 = 0;
 const PEER_A: u32 = 1;
 const PEER_B: u32 = 2;
+const PEER_C: u32 = 3;
+const PEER_D: u32 = 4;
 
 struct Test<'a> {
     time_oracle: Rc<MockTimeOracle<'a>>,
@@ -49,15 +51,21 @@ mod logging_setup {
     }
 }
 
-fn setup_test() -> Box<Test<'static>> {
+fn setup_test(size: u32) -> Box<Test<'static>> {
     start_logger();
     let time_oracle = Rc::new(MockTimeOracle::new());
 
     let mut transport = Rc::new(MockTransport::new());
 
+    let peer_ids = if size == 3 {
+        vec!(PEER_A, PEER_B)
+    } else if size == 5{
+        vec!(PEER_A, PEER_B, PEER_C, PEER_D)
+    } else {
+        panic!("Unsupported size");
+    };
     let raft_config = RaftConfig::<u32>::new(
-        3,
-        vec!(PEER_A, PEER_B),
+        peer_ids,
         *MIN_TIMEOUT,
         *MAX_TIMEOUT,
     );
@@ -75,7 +83,7 @@ fn setup_test() -> Box<Test<'static>> {
 
 #[test]
 fn follower_remains_follower() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
@@ -85,7 +93,6 @@ fn follower_remains_follower() {
         term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
-    test.raft.loop_iter();
 
     test.time_oracle.add_time(*MIN_TIMEOUT / 2);
     test.transport.send_to(IncomingRaftMessage {
@@ -93,14 +100,13 @@ fn follower_remains_follower() {
         term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
-    test.raft.loop_iter();
 
     assert_eq!(test.raft.state.read().unwrap().status, Follower);
 }
 
 #[test]
 fn append_entries_correct_term_number() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
@@ -109,7 +115,7 @@ fn append_entries_correct_term_number() {
         term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
-    test.raft.loop_iter();
+
     let response =
         test.transport.expect_append_entries_response(PEER_A);
     assert!(response.success);
@@ -117,7 +123,7 @@ fn append_entries_correct_term_number() {
 
 #[test]
 fn append_entries_updates_term_number() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
@@ -126,14 +132,14 @@ fn append_entries_updates_term_number() {
         term: 2,
         rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
-    test.raft.loop_iter();
+
     assert_eq!(test.raft.state.read().unwrap().term_number, 2);
 }
 
 
 #[test]
 fn append_entries_incorrect_term_number() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
@@ -146,7 +152,6 @@ fn append_entries_incorrect_term_number() {
         term: 0,
         rpc: RaftRPC::AppendEntries(AppendEntries {}),
     });
-    test.raft.loop_iter();
 
     //then
     test.transport.expect_append_entries_response(PEER_A);
@@ -154,7 +159,7 @@ fn append_entries_incorrect_term_number() {
 
 #[test]
 fn follower_becomes_candidate() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
 
@@ -175,8 +180,66 @@ fn follower_becomes_candidate() {
 }
 
 #[test]
+fn candidate_wins_election() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().term_number = 1;
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 1,
+        rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
+            vote_granted: true
+        }),
+    });
+    assert_eq!(test.raft.state.read().unwrap().status, Leader);
+    test.transport.expect_append_entries(PEER_A);
+    test.transport.expect_append_entries(PEER_B);
+}
+
+
+#[test]
+fn candidate_is_not_voted_for() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().term_number = 1;
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 1,
+        rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
+            vote_granted: false
+        }),
+    });
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+}
+
+#[test]
+fn candidate_voted_for_once_quorum_3() {
+    let test = setup_test(5);
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().term_number = 1;
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 1,
+        rpc: RaftRPC::RequestVoteResponse(RequestVoteResponse {
+            vote_granted: true
+        }),
+    });
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+}
+
+
+#[test]
 fn follower_grants_vote() {
-    let test = setup_test();
+    let test = setup_test(3);
     test.time_oracle.push_duration(*DELTA_100MS * 15);
     Raft::start(test.raft.clone());
 
@@ -185,7 +248,36 @@ fn follower_grants_vote() {
         term: 1,
         rpc: RaftRPC::RequestVote(RequestVote {}),
     });
-    test.raft.loop_iter();
 
-    test.transport.expect_vote(1);
+    let vote = test.transport.expect_vote(1);
+    assert!(vote.vote_granted)
+}
+
+#[test]
+fn follows_refuses_vote_bad_term() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+    test.raft.state.write().unwrap().term_number = 1;
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 0,
+        rpc: RaftRPC::RequestVote(RequestVote {}),
+    });
+
+    let vote = test.transport.expect_vote(1);
+    assert!(!vote.vote_granted)
+}
+
+#[test]
+fn leader_sends_append_entires() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*MIN_TIMEOUT);
+    Raft::start(test.raft.clone());
+    test.raft.state.write().unwrap().status = Leader;
+
+    test.time_oracle.add_time(*MIN_TIMEOUT);
+    test.transport.expect_append_entries(1);
+    test.transport.expect_append_entries(2);
 }

@@ -4,19 +4,16 @@ pub struct RaftConfig<NodeId> {
     min_election_timeout: Duration,
     max_election_timeout: Duration,
     peer_ids: Vec<NodeId>,
-    node_id: NodeId,
 }
 
 impl<NodeId> RaftConfig<NodeId> {
-    pub fn new(node_id: NodeId,
-               peer_ids: Vec<NodeId>,
+    pub fn new(peer_ids: Vec<NodeId>,
                min_election_timeout: Duration,
                max_election_timeout: Duration) -> Self {
         if min_election_timeout > max_election_timeout {
             panic!("min_electrion_timeout should be smaller than max_election_timeout");
         }
         Self {
-            node_id,
             peer_ids,
             min_election_timeout,
             max_election_timeout,
