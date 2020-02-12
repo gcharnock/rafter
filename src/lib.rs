@@ -123,7 +123,9 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
         let self_term_number = self.state.read().unwrap().term_number;
         if message.term > self_term_number {
             debug!("updating term number {} -> {}", self_term_number, message.term);
-            self.state.write().unwrap().term_number = message.term;
+            let mut state = self.state.write().unwrap();
+            state.term_number = message.term;
+            state.has_voted_this_term = false;
         }
 
         match message.rpc {
@@ -136,8 +138,14 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
                 unimplemented!()
             }
             RaftRPC::RequestVote(request) => {
-                let vote_granted = message.term >= self_term_number;
-                info!("Got vote request from {:?}, vote granted = {}", message.recv_from, vote_granted);
+                let correct_term = message.term >= self_term_number;
+                let has_vote_left = !self.state.read().unwrap().has_voted_this_term;
+                let vote_granted = correct_term && has_vote_left;
+                if vote_granted {
+                    self.state.write().unwrap().has_voted_this_term = true;
+                }
+                info!("Got vote request from {:?} vote_grated={}, correct_term={}, has_vote_left={}",
+                      message.recv_from, vote_granted, correct_term, has_vote_left);
                 self.vote(message.recv_from, vote_granted);
             }
             RaftRPC::RequestVoteResponse(response) => {

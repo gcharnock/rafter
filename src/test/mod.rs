@@ -59,7 +59,7 @@ fn setup_test(size: u32) -> Box<Test<'static>> {
 
     let peer_ids = if size == 3 {
         vec!(PEER_A, PEER_B)
-    } else if size == 5{
+    } else if size == 5 {
         vec!(PEER_A, PEER_B, PEER_C, PEER_D)
     } else {
         panic!("Unsupported size");
@@ -251,6 +251,52 @@ fn follower_grants_vote() {
 
     let vote = test.transport.expect_vote(1);
     assert!(vote.vote_granted)
+}
+
+
+#[test]
+fn follower_does_not_double_vote() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*DELTA_100MS * 15);
+    Raft::start(test.raft.clone());
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 1,
+        rpc: RaftRPC::RequestVote(RequestVote {}),
+    });
+    test.transport.expect_vote(PEER_A);
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_B,
+        term: 1,
+        rpc: RaftRPC::RequestVote(RequestVote {}),
+    });
+    let vote = test.transport.expect_vote(PEER_B);
+    assert!(!vote.vote_granted);
+}
+
+#[test]
+fn follower_state_reset_on_new_term() {
+    let test = setup_test(3);
+    test.time_oracle.push_duration(*DELTA_100MS * 15);
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_A,
+        term: 1,
+        rpc: RaftRPC::RequestVote(RequestVote {}),
+    });
+    test.transport.expect_vote(PEER_A);
+
+    test.transport.send_to(IncomingRaftMessage {
+        recv_from: PEER_B,
+        term: 2,
+        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+    });
+
+    let state = test.raft.state.read().unwrap();
+    assert_eq!(state.has_voted_this_term, false);
+    assert_eq!(state.term_number, 2);
+    assert_eq!(state.status, Follower);
 }
 
 #[test]
