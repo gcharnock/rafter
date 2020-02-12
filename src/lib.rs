@@ -20,6 +20,25 @@ extern crate lazy_static;
 #[cfg(test)]
 mod test;
 
+fn quorum_size(group_size: usize) -> usize {
+    return group_size / 2 + 1;
+}
+
+#[cfg(test)]
+mod quorum_test {
+    use crate::quorum_size;
+
+    #[test]
+    fn test_quorum_size() {
+        assert_eq!(quorum_size(1), 1);
+        assert_eq!(quorum_size(2), 2);
+        assert_eq!(quorum_size(3), 2);
+        assert_eq!(quorum_size(4), 3);
+        assert_eq!(quorum_size(5), 3);
+        assert_eq!(quorum_size(6), 4);
+        assert_eq!(quorum_size(7), 4);
+    }
+}
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum RaftStatus {
@@ -90,7 +109,8 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
         } else {
             {
                 let mut state = self.state.write().unwrap();
-                state.status = RaftStatus::Candidate(0);
+                // Vote for self
+                state.status = RaftStatus::Candidate(1);
                 state.term_number += 1;
             }
             for peer in self.raft_config.get_peer_ids().iter() {
@@ -121,10 +141,29 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
                 self.vote(message.recv_from, vote_granted);
             }
             RaftRPC::RequestVoteResponse(response) => {
+                self.on_request_vote_response(response);
+            }
+        }
+    }
+
+    fn on_request_vote_response(&self, response: RequestVoteResponse) {
+        let mut state = self.state.write().unwrap();
+        match &mut state.status {
+            Leader => { debug!("Ignoring spurious vote response "); }
+            RaftStatus::Follower => { debug!("Ignoring spurious vote response ") }
+            RaftStatus::Candidate(ref mut vote_count) => {
                 if response.vote_granted {
-                    self.state.write().unwrap().status = Leader;
-                    for node_id in self.raft_config.get_peer_ids().iter() {
-                        self.append_entries(*node_id);
+                    *vote_count += 1;
+                    let target_votes =
+                        quorum_size(self.raft_config.get_peer_count()) as u32;
+                    debug!(" received vote as candidate. Vote count is {}/{} ", *vote_count, target_votes);
+                    if *vote_count >= target_votes {
+                        info!(" Election won, becoming leader ");
+                        (*state).status = Leader;
+                        drop(state);
+                        for node_id in self.raft_config.get_peer_ids().iter() {
+                            self.append_entries(*node_id);
+                        }
                     }
                 }
             }

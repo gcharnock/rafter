@@ -55,7 +55,7 @@ fn setup_test(size: u32) -> Box<Test<'static>> {
     start_logger();
     let time_oracle = Rc::new(MockTimeOracle::new());
 
-    let mut transport = Rc::new(MockTransport::new());
+    let transport = Rc::new(MockTransport::new());
 
     let peer_ids = if size == 3 {
         vec!(PEER_A, PEER_B)
@@ -172,7 +172,7 @@ fn follower_becomes_candidate() {
 
     test.time_oracle.add_time(*DELTA_100MS * 14);
 
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate(1));
     assert_eq!(test.raft.state.read().unwrap().term_number, 1);
 
     test.transport.expect_request_vote_message(1);
@@ -184,7 +184,7 @@ fn candidate_wins_election() {
     let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
-    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().status = Candidate(1);
     test.raft.state.write().unwrap().term_number = 1;
 
     test.transport.send_to(IncomingRaftMessage {
@@ -205,7 +205,7 @@ fn candidate_is_not_voted_for() {
     let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
-    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().status = Candidate(0);
     test.raft.state.write().unwrap().term_number = 1;
 
     test.transport.send_to(IncomingRaftMessage {
@@ -215,7 +215,7 @@ fn candidate_is_not_voted_for() {
             vote_granted: false
         }),
     });
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate(0));
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn candidate_voted_for_once_quorum_3() {
     let test = setup_test(5);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
-    test.raft.state.write().unwrap().status = Candidate;
+    test.raft.state.write().unwrap().status = Candidate(0);
     test.raft.state.write().unwrap().term_number = 1;
 
     test.transport.send_to(IncomingRaftMessage {
@@ -233,7 +233,7 @@ fn candidate_voted_for_once_quorum_3() {
             vote_granted: true
         }),
     });
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate);
+    assert_eq!(test.raft.state.read().unwrap().status, Candidate(1));
 }
 
 

@@ -31,4 +31,8 @@ impl<NodeId> RaftConfig<NodeId> {
     pub fn get_peer_ids(&self) -> &Vec<NodeId> {
         return &self.peer_ids;
     }
+
+    pub fn get_peer_count(&self) -> usize {
+        self.peer_ids.len()
+    }
 }
