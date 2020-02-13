@@ -2,12 +2,12 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::{Raft, RaftConfig};
-use crate::RaftStatus::{Follower, Candidate, Leader};
 use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
 use self::mock_time_oracle::MockTimeOracle;
 use self::mock_transport::MockTransport;
 use self::logging_setup::start_logger;
+use crate::test::mock_transport::MockSateMachine;
 
 mod mock_time_oracle;
 mod mock_transport;
@@ -29,10 +29,14 @@ pub const PEER_B: u32 = 2;
 pub const PEER_C: u32 = 3;
 pub const PEER_D: u32 = 4;
 
+pub type TestId = u32;
+pub type TestLog = u32;
+pub type TestRaft<'s> = Raft<'s, TestId, TestLog, MockSateMachine>;
+
 struct Test<'a> {
     time_oracle: Rc<MockTimeOracle<'a>>,
     transport: Rc<MockTransport<'a>>,
-    raft: Rc<Raft<'a, u32>>,
+    raft: Rc<TestRaft<'a>>,
 }
 
 
@@ -74,11 +78,14 @@ fn setup_test(size: u32) -> Box<Test<'static>> {
         *MIN_TIMEOUT,
         *MAX_TIMEOUT,
     );
-    let raft = Raft::<u32>::new(
+    let state_machine = MockSateMachine::new();
+    let raft = Raft::<TestId, TestLog, MockSateMachine>::new(
         SELF_ID,
         raft_config,
         time_oracle.clone(),
-        transport.clone());
+        transport.clone(),
+        state_machine
+    );
 
     let raft = Rc::new(raft);
     transport.inject_raft(raft.clone());

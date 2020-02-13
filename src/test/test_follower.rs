@@ -1,4 +1,4 @@
-use crate::{Raft, RaftConfig};
+use crate::{Raft, RaftStatus};
 use crate::RaftStatus::{Follower, Candidate};
 use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
@@ -16,17 +16,27 @@ fn follower_remains_follower() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
     test.time_oracle.add_time(*MIN_TIMEOUT / 2);
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
-    assert_eq!(test.raft.state.read().unwrap().status, Follower);
+    assert!(test.raft.state.read().unwrap().status.is_follower());
 }
 
 #[test]
@@ -38,7 +48,12 @@ fn append_entries_correct_term_number() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
     let response =
@@ -55,7 +70,12 @@ fn append_entries_updates_term_number() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 2,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
     assert_eq!(test.raft.state.read().unwrap().term_number, 2);
@@ -75,7 +95,12 @@ fn append_entries_incorrect_term_number() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_A,
         term: 0,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
     //then
@@ -92,12 +117,17 @@ fn follower_becomes_candidate() {
 
 
     test.time_oracle.add_time(*DELTA_100MS);
-    assert_eq!(test.raft.state.read().unwrap().status, Follower);
+    assert!(test.raft.state.read().unwrap().status.is_follower());
     assert_eq!(test.raft.state.read().unwrap().term_number, 0);
 
     test.time_oracle.add_time(*DELTA_100MS * 14);
 
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate(1));
+    match test.raft.state.read().unwrap().status {
+        RaftStatus::Candidate(vote_count) => {
+            assert_eq!(vote_count, 1)
+        },
+        _ => panic!()
+    }
     assert_eq!(test.raft.state.read().unwrap().term_number, 1);
 
     test.transport.expect_request_vote_message(1);
@@ -118,13 +148,18 @@ fn follower_state_reset_on_new_term() {
     test.transport.send_to(IncomingRaftMessage {
         recv_from: PEER_B,
         term: 2,
-        rpc: RaftRPC::AppendEntries(AppendEntries {}),
+        rpc: RaftRPC::AppendEntries(AppendEntries {
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0
+        }),
     });
 
     let state = test.raft.state.read().unwrap();
-    assert_eq!(state.has_voted_this_term, false);
+    assert!(state.voted_for.is_none());
     assert_eq!(state.term_number, 2);
-    assert_eq!(state.status, Follower);
+    assert!(state.status.is_follower());
 }
 
 #[test]

@@ -7,7 +7,8 @@ use crate::transport::{Transport, RequestVote, RaftRPC, IncomingRaftMessage, Out
 use crate::config::RaftConfig;
 use std::rc::Rc;
 use std::fmt::Debug;
-use crate::RaftStatus::Leader;
+use crate::RaftStatus::{Leader, Candidate, Follower};
+use std::collections::{HashMap, VecDeque};
 
 pub mod config;
 pub mod time_oracle;
@@ -40,43 +41,107 @@ mod quorum_test {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum RaftStatus {
-    Leader,
+#[derive(Debug, Eq, PartialEq)]
+pub struct FollowerModel {
+    next_index: u64,
+    match_index: u64,
+}
+
+pub struct LeaderState<NodeId>
+    where NodeId: std::hash::Hash {
+    follower_models: HashMap<NodeId, FollowerModel>,
+}
+
+impl<NodeId> LeaderState<NodeId>
+    where NodeId: std::hash::Hash + Eq {
+    fn new() -> Self {
+        Self {
+            follower_models: HashMap::new()
+        }
+    }
+}
+
+pub enum RaftStatus<NodeId>
+    where NodeId: std::hash::Hash + Eq {
+    Leader(LeaderState<NodeId>),
     Follower,
     Candidate(u32),
 }
 
-pub struct RaftState {
-    status: RaftStatus,
-    has_voted_this_term: bool,
-    term_number: u64,
+impl<NodeId> RaftStatus<NodeId>
+    where NodeId: std::hash::Hash + Eq {
+    pub fn is_leader(&self) -> bool {
+        if let Leader(_) = self {
+            return true;
+        }
+        false
+    }
+
+    pub fn is_candidate(&self) -> bool {
+        if let Candidate(_) = self {
+            return true;
+        }
+        false
+    }
+
+    pub fn is_follower(&self) -> bool {
+        if let Follower = self {
+            return true;
+        }
+        false
+    }
 }
 
-pub struct Raft<'s, NodeId> {
+pub struct RaftState<NodeId>
+    where NodeId: std::hash::Hash + Eq {
+    status: RaftStatus<NodeId>,
+    voted_for: Option<NodeId>,
+    term_number: u64,
+    commit_index: u64,
+    last_applied: u64,
+}
+
+pub trait StateMachine<Log> {
+    fn apply(&mut self, log: Log);
+}
+
+pub struct Raft<'s, NodeId, Log, SM>
+    where SM: StateMachine<Log>,
+          Log: 's,
+          NodeId: Copy + Debug + std::hash::Hash + Eq + 's {
     node_id: NodeId,
-    state: Arc<RwLock<RaftState>>,
+    state: Arc<RwLock<RaftState<NodeId>>>,
     time_oracle: Rc<dyn TimeOracle<'s>>,
     raft_config: RaftConfig<NodeId>,
-    transport: Rc<dyn Transport<NodeId>>,
+    transport: Rc<dyn Transport<NodeId, Log>>,
+    log: VecDeque<Log>,
+    state_machine: SM,
 }
 
-impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
+impl<'s, NodeId, Log, SM> Raft<'s, NodeId, Log, SM>
+    where NodeId: Copy + Debug + std::hash::Hash + Eq + 's,
+          SM: StateMachine<Log> + 's {
     pub fn new(node_id: NodeId,
                raft_config: RaftConfig<NodeId>,
                time_oracle: Rc<dyn TimeOracle<'s>>,
-               transport: Rc<dyn Transport<NodeId>>)
-               -> Raft<'s, NodeId> {
-        Raft {
+               transport: Rc<dyn Transport<NodeId, Log>>,
+               state_machine: SM,
+    )
+               -> Self {
+        Self {
             node_id,
             state: Arc::new(RwLock::new(RaftState {
                 status: RaftStatus::Follower,
-                has_voted_this_term: false,
+                voted_for: None,
                 term_number: 0,
+                commit_index: 0,
+                last_applied: 0,
             })),
             time_oracle,
             raft_config,
             transport,
+            log: VecDeque::new(),
+            state_machine,
         }
     }
 
@@ -101,7 +166,7 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
 
     fn election_expire(&self) {
         debug!("election_expire");
-        if self.state.read().unwrap().status == Leader {
+        if self.state.read().unwrap().status.is_leader() {
             for peer_id in self.raft_config.get_peer_ids().iter() {
                 debug!("sending heartbeat to {:?}", peer_id);
                 self.append_entries(*peer_id);
@@ -119,13 +184,13 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
         }
     }
 
-    fn receive_rec(&self, message: IncomingRaftMessage<NodeId>) {
+    fn receive_rec(&self, message: IncomingRaftMessage<NodeId, Log>) {
         let self_term_number = self.state.read().unwrap().term_number;
         if message.term > self_term_number {
             debug!("updating term number {} -> {}", self_term_number, message.term);
             let mut state = self.state.write().unwrap();
             state.term_number = message.term;
-            state.has_voted_this_term = false;
+            state.voted_for = None;
         }
 
         match message.rpc {
@@ -139,10 +204,10 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
             }
             RaftRPC::RequestVote(request) => {
                 let correct_term = message.term >= self_term_number;
-                let has_vote_left = !self.state.read().unwrap().has_voted_this_term;
+                let has_vote_left = self.state.read().unwrap().voted_for.is_none();
                 let vote_granted = correct_term && has_vote_left;
                 if vote_granted {
-                    self.state.write().unwrap().has_voted_this_term = true;
+                    self.state.write().unwrap().voted_for = Some(message.recv_from);
                 }
                 info!("Got vote request from {:?} vote_grated={}, correct_term={}, has_vote_left={}",
                       message.recv_from, vote_granted, correct_term, has_vote_left);
@@ -157,7 +222,7 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
     fn on_request_vote_response(&self, response: RequestVoteResponse) {
         let mut state = self.state.write().unwrap();
         match &mut state.status {
-            Leader => { debug!("Ignoring spurious vote response "); }
+            RaftStatus::Leader(_) => { debug!("Ignoring spurious vote response "); }
             RaftStatus::Follower => { debug!("Ignoring spurious vote response ") }
             RaftStatus::Candidate(ref mut vote_count) => {
                 if response.vote_granted {
@@ -167,7 +232,7 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
                     debug!(" received vote as candidate. Vote count is {}/{} ", *vote_count, target_votes);
                     if *vote_count >= target_votes {
                         info!(" Election won, becoming leader ");
-                        (*state).status = Leader;
+                        (*state).status = Leader(LeaderState::new());
                         drop(state);
                         for node_id in self.raft_config.get_peer_ids().iter() {
                             self.append_entries(*node_id);
@@ -182,7 +247,12 @@ impl<'s, NodeId: Copy + Debug + 's> Raft<'s, NodeId> {
         self.transport.send_msg(OutgoingRaftMessage {
             send_to: node_id,
             term: self.state.read().unwrap().term_number,
-            rpc: RaftRPC::AppendEntries(AppendEntries {}),
+            rpc: RaftRPC::AppendEntries(AppendEntries {
+                prev_log_index: 0,
+                prev_log_term: 0,
+                entries: vec![],
+                leader_commit: 0
+            }),
         });
     }
 

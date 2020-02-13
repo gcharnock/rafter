@@ -1,5 +1,5 @@
 use crate::{Raft, RaftConfig};
-use crate::RaftStatus::{Follower, Candidate, Leader};
+use crate::RaftStatus::{Candidate, Leader};
 use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
 use crate::test::mock_time_oracle::MockTimeOracle;
@@ -21,7 +21,7 @@ fn candidate_is_not_voted_for() {
             vote_granted: false
         }),
     });
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate(0));
+    assert!(test.raft.state.read().unwrap().status.is_candidate());
 }
 
 
@@ -40,7 +40,7 @@ fn candidate_wins_election() {
             vote_granted: true
         }),
     });
-    assert_eq!(test.raft.state.read().unwrap().status, Leader);
+    assert!(test.raft.state.read().unwrap().status.is_leader());
     test.transport.expect_append_entries(PEER_A);
     test.transport.expect_append_entries(PEER_B);
 }
@@ -61,6 +61,6 @@ fn candidate_voted_for_once_quorum_3() {
             vote_granted: true
         }),
     });
-    assert_eq!(test.raft.state.read().unwrap().status, Candidate(1));
+    assert!(test.raft.state.read().unwrap().status.is_candidate());
 }
 

@@ -1,5 +1,5 @@
-use crate::{Raft, RaftConfig};
-use crate::RaftStatus::{Follower, Candidate, Leader};
+use crate::{Raft, RaftConfig, LeaderState};
+use crate::RaftStatus;
 use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
 use crate::test::mock_time_oracle::MockTimeOracle;
@@ -11,7 +11,7 @@ fn leader_sends_append_entires() {
     let test = setup_test(3);
     test.time_oracle.push_duration(*MIN_TIMEOUT);
     Raft::start(test.raft.clone());
-    test.raft.state.write().unwrap().status = Leader;
+    test.raft.state.write().unwrap().status = RaftStatus::Leader(LeaderState::new());
 
     test.time_oracle.add_time(*MIN_TIMEOUT);
     test.transport.expect_append_entries(1);
