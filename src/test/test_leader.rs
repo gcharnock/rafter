@@ -1,19 +1,13 @@
-use crate::{Raft, RaftConfig, LeaderState};
+use crate::{LeaderState};
 use crate::RaftStatus;
-use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
-use crate::test::mock_time_oracle::MockTimeOracle;
-use crate::test::{PEER_A, MIN_TIMEOUT, PEER_B};
 use crate::test::setup_test;
 
 #[test]
 fn leader_sends_append_entires() {
-    let test = setup_test(3);
-    test.time_oracle.push_duration(*MIN_TIMEOUT);
-    Raft::start(test.raft.clone());
-    test.raft.state.write().unwrap().status = RaftStatus::Leader(LeaderState::new());
+    let mut raft = setup_test(3);
+    raft.state.status = RaftStatus::Leader(LeaderState::new());
 
-    test.time_oracle.add_time(*MIN_TIMEOUT);
-    test.transport.expect_append_entries(1);
-    test.transport.expect_append_entries(2);
+    raft.raft_io.expect_append_entries(1);
+    raft.raft_io.expect_append_entries(2);
 }

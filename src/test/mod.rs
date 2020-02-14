@@ -2,15 +2,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::{Raft, RaftConfig};
-use crate::transport::{RaftRPC, RequestVote, IncomingRaftMessage, AppendEntries, RequestVoteResponse};
 
-use self::mock_time_oracle::MockTimeOracle;
-use self::mock_transport::MockTransport;
+use self::mock_io::MockRaftIO;
 use self::logging_setup::start_logger;
-use crate::test::mock_transport::MockSateMachine;
 
-mod mock_time_oracle;
-mod mock_transport;
+mod mock_io;
 
 mod test_follower;
 mod test_candidate;
@@ -31,12 +27,11 @@ pub const PEER_D: u32 = 4;
 
 pub type TestId = u32;
 pub type TestLog = u32;
-pub type TestRaft<'s> = Raft<'s, TestId, TestLog, MockSateMachine>;
+pub type TestRaft = Raft<TestId, TestLog, MockRaftIO>;
 
 struct Test<'a> {
-    time_oracle: Rc<MockTimeOracle<'a>>,
-    transport: Rc<MockTransport<'a>>,
-    raft: Rc<TestRaft<'a>>,
+    raft_io: &'a MockRaftIO,
+    raft: Rc<TestRaft>,
 }
 
 
@@ -60,11 +55,8 @@ mod logging_setup {
     }
 }
 
-fn setup_test(size: u32) -> Box<Test<'static>> {
+fn setup_test(size: u32) -> Raft<TestId, TestLog, MockRaftIO> {
     start_logger();
-    let time_oracle = Rc::new(MockTimeOracle::new());
-
-    let transport = Rc::new(MockTransport::new());
 
     let peer_ids = if size == 3 {
         vec!(PEER_A, PEER_B)
@@ -78,19 +70,13 @@ fn setup_test(size: u32) -> Box<Test<'static>> {
         *MIN_TIMEOUT,
         *MAX_TIMEOUT,
     );
-    let state_machine = MockSateMachine::new();
-    let raft = Raft::<TestId, TestLog, MockSateMachine>::new(
+    let mock_raft_io = MockRaftIO::new();
+    let raft = Raft::<TestId, TestLog, MockRaftIO>::new(
         SELF_ID,
         raft_config,
-        time_oracle.clone(),
-        transport.clone(),
-        state_machine
+        mock_raft_io
     );
-
-    let raft = Rc::new(raft);
-    transport.inject_raft(raft.clone());
-
-    return Box::new(Test { raft, transport, time_oracle });
+    return raft;
 }
 
 

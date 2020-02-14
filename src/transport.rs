@@ -4,8 +4,7 @@ pub trait Transport<NodeId, Log> {
 }
 
 #[derive(Debug)]
-pub struct RequestVote {
-}
+pub struct RequestVote {}
 
 #[derive(Debug)]
 pub struct RequestVoteResponse {
@@ -18,7 +17,7 @@ pub struct AppendEntries<Log> {
     pub prev_log_index: u64,
     pub prev_log_term: u64,
     pub entries: Vec<Log>,
-    pub leader_commit: u64
+    pub leader_commit: u64,
 }
 
 #[derive(Debug)]
@@ -46,5 +45,10 @@ pub struct IncomingRaftMessage<NodeId, Log> {
     pub rpc: RaftRPC<Log>,
     pub term: u64,
     pub recv_from: NodeId,
+}
+
+#[derive(Debug)]
+pub struct ClientRequest<Log> {
+    pub log: Log
 }
 
