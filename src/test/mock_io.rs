@@ -1,28 +1,30 @@
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
 use std::collections::VecDeque;
-use crate::transport::{OutgoingRaftMessage, IncomingRaftMessage, RaftRPC, AppendEntriesResponse, RequestVote, AppendEntries, RequestVoteResponse};
+use crate::transport::{OutgoingRaftMessage, RaftRPC, AppendEntriesResponse, RequestVote, AppendEntries, RequestVoteResponse};
 use crate::{RaftIO, ClientResponse};
 use crate::test::{TestLog, TestId};
+use std::time::Duration;
 
 pub struct MockRaftIO {
     send_queue: RefCell<VecDeque<OutgoingRaftMessage<TestId, TestLog>>>,
-    recv_queue: RefCell<VecDeque<IncomingRaftMessage<TestId, TestLog>>>,
     committed: Vec<TestLog>,
     client_responses: Vec<ClientResponse<TestId>>,
+    last_reset: Cell<Option<Duration>>
 }
 
 impl MockRaftIO {
     pub fn new() -> Self {
         Self {
             send_queue: RefCell::new(VecDeque::new()),
-            recv_queue: RefCell::new(VecDeque::new()),
             committed: Vec::new(),
             client_responses: Vec::new(),
+            last_reset: Cell::new(None)
         }
     }
 
-    fn expect_reset(&mut self) {
-
+    pub fn expect_reset(&mut self) -> Duration {
+        let delay = self.last_reset.replace(None);
+        delay.expect("no reset")
     }
 
     fn apply_to_state_machine(&mut self, log: u32) {
@@ -79,7 +81,7 @@ impl<'s> RaftIO<TestId, TestLog> for MockRaftIO {
         self.send_queue.borrow_mut().push_back(msg);
     }
 
-    fn reset_timer(&self) {
-        unimplemented!()
+    fn reset_timer(&self, delay: Duration) {
+        self.last_reset.set(Some(delay));
     }
 }

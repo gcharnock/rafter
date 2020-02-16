@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::time::Duration;
 
 use crate::{Raft, RaftConfig};
@@ -28,12 +27,6 @@ pub const PEER_D: u32 = 4;
 pub type TestId = u32;
 pub type TestLog = u32;
 pub type TestRaft = Raft<TestId, TestLog, MockRaftIO>;
-
-struct Test<'a> {
-    raft_io: &'a MockRaftIO,
-    raft: Rc<TestRaft>,
-}
-
 
 mod logging_setup {
     extern crate env_logger;

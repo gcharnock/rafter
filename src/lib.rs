@@ -1,5 +1,8 @@
+#![allow(unused_variables)]
+
 #[macro_use]
 extern crate log;
+
 
 use crate::transport::{RequestVote, RaftRPC, IncomingRaftMessage, OutgoingRaftMessage, AppendEntriesResponse, AppendEntries, RequestVoteResponse, ClientRequest};
 use crate::config::RaftConfig;
@@ -7,6 +10,7 @@ use std::fmt::Debug;
 use crate::RaftStatus::{Leader, Candidate, Follower};
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
+use std::time::Duration;
 
 pub mod config;
 pub mod time_oracle;
@@ -99,8 +103,7 @@ pub struct RaftState<NodeId>
     last_applied: u64,
 }
 
-pub trait StateMachine<Log> {
-}
+pub trait StateMachine<Log> {}
 
 pub enum ClientResponse<NodeId> {
     Success,
@@ -111,7 +114,7 @@ pub trait RaftIO<NodeId, Log> {
     fn send_client_response(&mut self, response: ClientResponse<NodeId>);
     fn apply_to_state_machine(&mut self, log: Log);
     fn send_msg(&self, msg: OutgoingRaftMessage<NodeId, Log>);
-    fn reset_timer(&self);
+    fn reset_timer(&self, delay: Duration);
 }
 
 pub struct Raft<NodeId, Log, IO>
@@ -121,6 +124,7 @@ pub struct Raft<NodeId, Log, IO>
     raft_config: RaftConfig<NodeId>,
     log: VecDeque<Log>,
     raft_io: IO,
+    election_timeout: Duration,
 }
 
 impl<NodeId, Log, IO> Raft<NodeId, Log, IO>
@@ -143,6 +147,7 @@ impl<NodeId, Log, IO> Raft<NodeId, Log, IO>
             raft_config,
             log: VecDeque::new(),
             raft_io,
+            election_timeout: Duration::new(1, 0),
         }
     }
 
@@ -165,6 +170,17 @@ impl<NodeId, Log, IO> Raft<NodeId, Log, IO>
         }
     }
 
+    pub fn on_leader_timeout(&mut self) {
+        debug!("leader expire");
+        if let Leader(leader_state) = &self.state.status {
+            for (follower_id, model) in leader_state.follower_models.iter() {
+                self.append_entries(*follower_id);
+            }
+        } else {
+            panic!("not leader");
+        }
+    }
+
     pub fn on_client_request(&mut self, client_request: ClientRequest<Log>) {}
 
     pub fn on_raft_message(&mut self, message: IncomingRaftMessage<NodeId, Log>) {
@@ -178,7 +194,7 @@ impl<NodeId, Log, IO> Raft<NodeId, Log, IO>
         match message.rpc {
             RaftRPC::AppendEntries(_) => {
                 debug!("AppendEntries");
-                self.raft_io.reset_timer();
+                self.raft_io.reset_timer(self.election_timeout);
                 self.append_entries_response(message.recv_from, true);
             }
             RaftRPC::AppendEntriesResponse(_) => {

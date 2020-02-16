@@ -18,6 +18,7 @@ fn follower_remains_follower() {
             leader_commit: 0
         }),
     });
+    raft.raft_io.expect_reset();
 
     raft.on_raft_message(IncomingRaftMessage {
         recv_from: PEER_A,
