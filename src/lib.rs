@@ -170,6 +170,20 @@ impl<NodeId, Log, IO> Raft<NodeId, Log, IO>
         }
     }
 
+    fn become_leader(&mut self) {
+        debug!("Becoming leader");
+        let mut leader_state = LeaderState::new();
+        for node_id in self.raft_config.get_peer_ids().iter() {
+            leader_state.follower_models.insert(*node_id, FollowerModel {
+                match_index: 0,
+                next_index: 0
+            });
+        };
+        self.state.status = RaftStatus::Leader(leader_state);
+        self.on_leader_timeout();
+        self.raft_io.reset_timer(self.raft_config.get_min_election_timeout()/2);
+    }
+
     pub fn on_leader_timeout(&mut self) {
         debug!("leader expire");
         if let Leader(leader_state) = &self.state.status {

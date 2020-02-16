@@ -35,8 +35,7 @@ fn candidate_wins_election() {
         }),
     });
     assert!(raft.state.status.is_leader());
-    raft.raft_io.expect_append_entries(PEER_A);
-    raft.raft_io.expect_append_entries(PEER_B);
+    raft.raft_io.expect_append_entries(vec![PEER_A, PEER_B]);
 }
 
 

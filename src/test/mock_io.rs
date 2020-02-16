@@ -1,5 +1,5 @@
 use std::cell::{RefCell, Cell};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use crate::transport::{OutgoingRaftMessage, RaftRPC, AppendEntriesResponse, RequestVote, AppendEntries, RequestVoteResponse};
 use crate::{RaftIO, ClientResponse};
 use crate::test::{TestLog, TestId};
@@ -40,13 +40,29 @@ impl MockRaftIO {
         panic!("Bad message type");
     }
 
-    pub fn expect_append_entries(&self, node_id: u32) -> AppendEntries<TestLog> {
-        let msg = self.send_queue.borrow_mut().pop_front().unwrap();
-        assert_eq!(msg.send_to, node_id);
-        if let RaftRPC::AppendEntries(append_entries) = msg.rpc {
-            return append_entries;
+    pub fn expect_append_entries(&self, node_ids: Vec<TestId>) -> Vec<AppendEntries<TestLog>> {
+        let mut queue = self.send_queue.borrow_mut();
+        if queue.len() != node_ids.len() {
+            panic!("Wrong number of messages expected, {} actual {}",
+                   node_ids.len(),
+                   queue.len())
         }
-        panic!("Bad message type");
+
+        let mut msg_by_id = HashMap::new();
+        let range = 0..queue.len();
+        for msg in queue.drain(range) {
+            msg_by_id.insert(msg.send_to, msg);
+        }
+
+        node_ids.into_iter().map(|node_id| {
+            let msg = msg_by_id.remove(&node_id)
+                .expect("missing message");
+            if let RaftRPC::AppendEntries(append_entries) = msg.rpc {
+                append_entries
+            } else {
+                panic!("wrong message type")
+            }
+        }).collect()
     }
 
     pub fn expect_append_entries_response(&self, node_id: u32) -> AppendEntriesResponse {
