@@ -8,7 +8,7 @@ use crate::test::setup_test;
 fn candidate_is_not_voted_for() {
     let mut raft = setup_test(3);
     raft.state.status = Candidate(0);
-    raft.state.term_number = 1;
+    raft.state.term = 1;
 
     raft.on_raft_message(IncomingRaftMessage {
         recv_from: PEER_A,
@@ -25,7 +25,7 @@ fn candidate_is_not_voted_for() {
 fn candidate_wins_election() {
     let mut raft = setup_test(3);
     raft.state.status = Candidate(1);
-    raft.state.term_number = 1;
+    raft.state.term = 1;
 
     raft.on_raft_message(IncomingRaftMessage {
         recv_from: PEER_A,
@@ -44,7 +44,7 @@ fn candidate_voted_for_once_quorum_3() {
     let mut raft = setup_test(5);
     raft.on_election_expire();
     raft.state.status = Candidate(0);
-    raft.state.term_number = 1;
+    raft.state.term = 1;
 
     raft.on_raft_message(IncomingRaftMessage {
         recv_from: PEER_A,

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Raft, RaftConfig};
+use crate::{Raft, RaftConfig, LogEntry};
 
 use self::mock_io::MockRaftIO;
 use self::logging_setup::start_logger;
@@ -48,7 +48,7 @@ mod logging_setup {
     }
 }
 
-fn setup_test(size: u32) -> Raft<TestId, TestLog, MockRaftIO> {
+fn setup_test(size: u32) -> TestRaft {
     start_logger();
 
     let peer_ids = if size == 3 {
@@ -67,9 +67,12 @@ fn setup_test(size: u32) -> Raft<TestId, TestLog, MockRaftIO> {
     let raft = Raft::<TestId, TestLog, MockRaftIO>::new(
         SELF_ID,
         raft_config,
-        mock_raft_io
+        mock_raft_io,
     );
     return raft;
 }
 
+fn get_log(raft: &mut TestRaft) -> Vec<LogEntry<TestLog>> {
+    raft.log.iter().map(|entry|*entry).collect()
+}
 

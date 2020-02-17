@@ -27,6 +27,10 @@ impl MockRaftIO {
         delay.expect("no reset")
     }
 
+    pub fn assert_no_resets(&self) {
+        assert_eq!(self.last_reset.get(), None);
+    }
+
     fn apply_to_state_machine(&mut self, log: u32) {
         self.committed.push(log);
     }
